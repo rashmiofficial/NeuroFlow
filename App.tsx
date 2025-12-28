@@ -1,8 +1,10 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { LogIn, LogOut, Clock, Zap, Calendar, ArrowRight, RefreshCw, Trash2, Bell, ChevronLeft } from 'lucide-react';
-import TimePicker from './components/TimePicker';
-import EnergyWindow from './components/EnergyWindow';
+import { 
+  Home, BarChart2, MessageSquare, User, CreditCard, Calendar, Settings, LogOut, 
+  Search, Sliders, ChevronDown, Bell 
+} from 'lucide-react';
+import HomeView from './components/HomeView';
 import DashboardView from './components/DashboardView';
 
 export interface CalendarEvent {
@@ -13,346 +15,237 @@ export interface CalendarEvent {
   date: string;      // YYYYMMDD
 }
 
-// Timezone Utility for New Delhi (IST: UTC+5:30)
 const IST_TIMEZONE = 'Asia/Kolkata';
 
-const getISTDateParts = (date: Date = new Date()) => {
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: IST_TIMEZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false
-  });
-  
-  const parts = formatter.formatToParts(date);
-  const findPart = (type: string) => parts.find(p => p.type === type)?.value || '';
-  
-  return {
-    year: findPart('year'),
-    month: findPart('month'),
-    day: findPart('day'),
-    hour: findPart('hour'),
-    minute: findPart('minute'),
-    yyyymmdd: `${findPart('year')}${findPart('month')}${findPart('day')}`
-  };
-};
-
-// IndexedDB Utility
 const DB_NAME = 'FocusPlannerDB';
 const STORE_NAME = 'calendars';
 const USER_KEY = 'default_user';
+const SETTINGS_KEY = 'user_settings';
 
 const initDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, 1);
     request.onupgradeneeded = () => {
       const db = request.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME);
-      }
+      if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
 };
 
-const saveCalendar = async (events: CalendarEvent[]) => {
+const saveCalendarToDB = async (events: CalendarEvent[]) => {
   const db = await initDB();
-  return new Promise<void>((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readwrite');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.put(events, USER_KEY);
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
+  const transaction = db.transaction(STORE_NAME, 'readwrite');
+  transaction.objectStore(STORE_NAME).put(events, USER_KEY);
+};
+
+const loadCalendarFromDB = async (): Promise<CalendarEvent[] | null> => {
+  const db = await initDB();
+  return new Promise((resolve) => {
+    const transaction = db.transaction(STORE_NAME, 'readonly');
+    const request = transaction.objectStore(STORE_NAME).get(USER_KEY);
+    request.onsuccess = () => resolve(request.result || null);
   });
 };
 
-const loadCalendar = async (): Promise<CalendarEvent[] | null> => {
+const saveSettingsToDB = async (settings: any) => {
   const db = await initDB();
-  return new Promise((resolve, reject) => {
+  const transaction = db.transaction(STORE_NAME, 'readwrite');
+  transaction.objectStore(STORE_NAME).put(settings, SETTINGS_KEY);
+};
+
+const loadSettingsFromDB = async (): Promise<any | null> => {
+  const db = await initDB();
+  return new Promise((resolve) => {
     const transaction = db.transaction(STORE_NAME, 'readonly');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.get(USER_KEY);
+    const request = transaction.objectStore(STORE_NAME).get(SETTINGS_KEY);
     request.onsuccess = () => resolve(request.result || null);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => resolve(null);
   });
 };
 
 const deleteCalendarFromDB = async () => {
   const db = await initDB();
-  return new Promise<void>((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readwrite');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.delete(USER_KEY);
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
-};
-
-const formatTo12h = (time24: string) => {
-  const [h, m] = time24.split(':');
-  let hours = parseInt(h);
-  const period = hours >= 12 ? 'PM' : 'AM';
-  hours = hours % 12 || 12;
-  return `${String(hours).padStart(2, '0')}:${m} ${period}`;
+  db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).delete(USER_KEY);
 };
 
 const App: React.FC = () => {
-  const [view, setView] = useState<'setup' | 'dashboard'>('setup');
+  const [activeTab, setActiveTab] = useState<'home' | 'dashboard' | 'statistics' | 'messages' | 'profile' | 'billings' | 'settings'>('home');
+  
   const [startTime, setStartTime] = useState({ hour: '08', minute: '00', period: 'AM' });
   const [endTime, setEndTime] = useState({ hour: '06', minute: '00', period: 'PM' });
   const [focusGoal, setFocusGoal] = useState(7);
   const [peakWindow, setPeakWindow] = useState('Morning');
   const [allEvents, setAllEvents] = useState<CalendarEvent[] | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [lastSaved, setLastSaved] = useState<any>(null);
+  const [isCalendarDirty, setIsCalendarDirty] = useState(false);
 
   useEffect(() => {
-    const hydrate = async () => {
-      const stored = await loadCalendar();
+    loadCalendarFromDB().then(stored => { 
+      if (stored) setAllEvents(stored); 
+    });
+    const fetchSettings = async () => {
+      const stored = await loadSettingsFromDB();
       if (stored) {
-        setAllEvents(stored);
+        setStartTime(stored.startTime);
+        setEndTime(stored.endTime);
+        setFocusGoal(stored.focusGoal);
+        setPeakWindow(stored.peakWindow);
+        setLastSaved(stored);
+      } else {
+        const initial = { startTime, endTime, focusGoal, peakWindow };
+        setLastSaved(initial);
       }
     };
-    hydrate();
+    fetchSettings();
   }, []);
 
-  const parseICS = (data: string) => {
-    const events: CalendarEvent[] = [];
-    const unfoldedData = data.replace(/\r?\n[ \t]/g, '');
-    const lines = unfoldedData.split(/\r?\n/);
-    
-    let currentEvent: any = null;
+  const isSettingsDirty = lastSaved ? (
+    JSON.stringify(lastSaved.startTime) !== JSON.stringify(startTime) ||
+    JSON.stringify(lastSaved.endTime) !== JSON.stringify(endTime) ||
+    lastSaved.focusGoal !== focusGoal ||
+    lastSaved.peakWindow !== peakWindow ||
+    isCalendarDirty
+  ) : false;
 
-    for (let line of lines) {
-      if (!line.trim()) continue;
-
-      const colonIndex = line.indexOf(':');
-      if (colonIndex === -1) continue;
-
-      const keyPart = line.substring(0, colonIndex);
-      const value = line.substring(colonIndex + 1).trim();
-      const baseKey = keyPart.split(';')[0].toUpperCase();
-
-      if (baseKey === 'BEGIN' && value === 'VEVENT') {
-        currentEvent = { summary: 'Unnamed Event', dtStart: '', dtEnd: '' };
-      } else if (baseKey === 'END' && value === 'VEVENT') {
-        if (currentEvent && currentEvent.dtStart) {
-          const parseToISTDate = (val: string) => {
-            const match = val.match(/(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?/);
-            if (!match) return null;
-            
-            const [_, y, mo, d, h, m, s, isUTC] = match;
-            let dateObj: Date;
-            
-            if (h) {
-              if (isUTC) {
-                dateObj = new Date(Date.UTC(parseInt(y), parseInt(mo) - 1, parseInt(d), parseInt(h), parseInt(m), parseInt(s)));
-              } else {
-                dateObj = new Date(parseInt(y), parseInt(mo) - 1, parseInt(d), parseInt(h), parseInt(m), parseInt(s));
-              }
-            } else {
-              dateObj = new Date(parseInt(y), parseInt(mo) - 1, parseInt(d));
-            }
-            
-            return getISTDateParts(dateObj);
-          };
-
-          const startParts = parseToISTDate(currentEvent.dtStart);
-          const endParts = currentEvent.dtEnd ? parseToISTDate(currentEvent.dtEnd) : null;
-
-          if (startParts) {
-            const startH = startParts.hour;
-            const startM = startParts.minute;
-            
-            let endH = "23", endM = "59";
-            if (endParts) {
-              endH = endParts.hour;
-              endM = endParts.minute;
-            } else {
-              const h = (parseInt(startH) + 1) % 24;
-              endH = String(h).padStart(2, '0');
-              endM = startM;
-            }
-
-            const startTotal = parseInt(startH) * 60 + parseInt(startM);
-            let endTotal = parseInt(endH) * 60 + parseInt(endM);
-            
-            if (endParts && endParts.yyyymmdd !== startParts.yyyymmdd) {
-              endTotal += 1440;
-            }
-
-            events.push({
-              summary: currentEvent.summary,
-              startTime: `${startH}:${startM}`,
-              endTime: `${endH}:${endM}`,
-              durationMinutes: Math.max(0, endTotal - startTotal) || 60,
-              date: startParts.yyyymmdd
-            });
-          }
-        }
-        currentEvent = null;
-      } else if (currentEvent) {
-        if (baseKey === 'SUMMARY') {
-          currentEvent.summary = value;
-        } else if (baseKey === 'DTSTART') {
-          currentEvent.dtStart = value;
-        } else if (baseKey === 'DTEND') {
-          currentEvent.dtEnd = value;
-        }
-      }
+  const handleSaveAll = async () => {
+    const settings = { startTime, endTime, focusGoal, peakWindow };
+    await saveSettingsToDB(settings);
+    if (allEvents) {
+      await saveCalendarToDB(allEvents);
+    } else {
+      await deleteCalendarFromDB();
     }
-    return events;
+    setLastSaved(settings);
+    setIsCalendarDirty(false);
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const content = event.target?.result as string;
-      const parsedEvents = parseICS(content);
-      setAllEvents(parsedEvents);
-      await saveCalendar(parsedEvents);
-    };
-    reader.readAsText(file);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+  const navItems = [
+    { id: 'home', label: 'Home', icon: Home },
+    { id: 'dashboard', label: 'Dashboard', icon: BarChart2 },
+    { id: 'messages', label: 'Messages', icon: MessageSquare },
+    { id: 'profile', label: 'Profile', icon: User },
+    { id: 'billings', label: 'Billings', icon: CreditCard },
+    { id: 'calendar', label: 'Calendar', icon: Calendar },
+    { id: 'settings', label: 'Settings', icon: Settings },
+  ];
+
+  const handleEventsParsed = (events: CalendarEvent[]) => {
+    setAllEvents(events);
+    setIsCalendarDirty(true);
   };
 
-  const handleClearCalendar = async () => {
-    await deleteCalendarFromDB();
+  const handleClearCalendar = () => {
     setAllEvents(null);
+    setIsCalendarDirty(true);
   };
-
-  const todayIST = getISTDateParts();
-  const todaysEvents = allEvents?.filter(e => e.date === todayIST.yyyymmdd) || [];
-
-  if (view === 'dashboard') {
-    return (
-      <DashboardView 
-        startTime={startTime}
-        endTime={endTime}
-        focusGoal={focusGoal}
-        peakWindow={peakWindow}
-        calendarEvents={allEvents || []}
-        onBack={() => setView('setup')}
-      />
-    );
-  }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
-      <div className="w-full max-w-xl bg-transparent space-y-8 py-10">
-        <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".ics" className="hidden" />
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <div className="space-y-4">
-            <div className="flex items-center space-x-2 text-[#ED6A45] font-semibold text-sm tracking-wide">
-              <LogIn size={18} />
-              <span>DAILY START</span>
-            </div>
-            <TimePicker value={startTime} onChange={setStartTime} />
-          </div>
-          <div className="space-y-4">
-            <div className="flex items-center space-x-2 text-[#ED6A45] font-semibold text-sm tracking-wide">
-              <LogOut size={18} />
-              <span>DAILY END</span>
-            </div>
-            <TimePicker value={endTime} onChange={setEndTime} />
+    <div className="flex flex-col lg:flex-row min-h-screen bg-white overflow-x-hidden">
+      {/* Navigation Bar - Sticky bottom for mobile/tablet, Sidebar for Desktop */}
+      <aside className="fixed bottom-0 left-0 w-full lg:static lg:w-64 border-t lg:border-t-0 lg:border-r border-gray-100 bg-white lg:bg-transparent flex flex-row lg:flex-col p-2 lg:p-8 items-center lg:items-stretch z-50 overflow-x-auto no-scrollbar lg:overflow-visible">
+        <div className="hidden lg:flex items-center space-x-2 px-2 lg:mb-12">
+          <div className="grid grid-cols-2 gap-1 flex-shrink-0">
+            <div className="w-3 h-3 bg-black rounded-sm"></div>
+            <div className="w-3 h-3 bg-black rounded-sm"></div>
+            <div className="w-3 h-3 bg-black rounded-sm"></div>
+            <div className="w-3 h-3 bg-black rounded-sm"></div>
           </div>
         </div>
 
-        <div className="space-y-4">
-          <div className="flex items-center space-x-2 text-[#ED6A45] font-semibold text-sm tracking-wide">
-            <Clock size={18} />
-            <span>DAILY FOCUS GOAL</span>
-          </div>
-          <div className="bg-white rounded-3xl p-6 shadow-sm flex items-center space-x-6 border border-gray-50">
-            <div className="flex-1 px-2">
-              <input 
-                type="range" min="1" max="12" value={focusGoal}
-                onChange={(e) => setFocusGoal(parseInt(e.target.value))}
-                className="w-full accent-[#ED6A45] appearance-none bg-transparent cursor-pointer"
-              />
-            </div>
-            <span className="text-3xl font-medium text-gray-700 w-12 text-right">{focusGoal}h</span>
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          <div className="flex items-center space-x-2 text-[#ED6A45] font-semibold text-sm tracking-wide">
-            <Zap size={18} />
-            <span>PEAK ENERGY WINDOW</span>
-          </div>
-          <EnergyWindow selected={peakWindow} onSelect={setPeakWindow} />
-        </div>
-
-        {allEvents !== null && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2 text-[#ED6A45] font-semibold text-sm tracking-wide">
-                  <Calendar size={18} />
-                  <span>PREVIEWING TODAY'S EVENTS (IST)</span>
-                </div>
-                <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tighter bg-gray-100 px-2 py-1 rounded-md">New Delhi Timezone</span>
-              </div>
-              <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-50 space-y-3 max-h-[350px] overflow-y-auto no-scrollbar">
-                {todaysEvents.length > 0 ? (
-                  todaysEvents.sort((a,b) => a.startTime.localeCompare(b.startTime)).map((event, idx) => (
-                    <div key={idx} className="flex items-center justify-between p-4 bg-[#FDF8F5] rounded-2xl border border-[#FADCD5]/30 group hover:border-[#ED6A45]/20 transition-colors">
-                      <div className="flex flex-col">
-                        <span className="font-bold text-[#8E6043] group-hover:text-[#ED6A45] transition-colors">{event.summary}</span>
-                        <span className="text-[10px] text-gray-400 font-medium">{event.durationMinutes} minutes</span>
-                      </div>
-                      <span className="text-xs font-bold text-[#ED6A45] bg-[#ED6A45]/10 px-4 py-1.5 rounded-full tabular-nums whitespace-nowrap">
-                        {formatTo12h(event.startTime)}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-center py-10 text-gray-400 italic flex flex-col items-center gap-2">
-                    <Calendar size={32} className="opacity-20" />
-                    <span>No synced events for today (IST)</span>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="flex gap-4">
-              <button onClick={() => fileInputRef.current?.click()} className="flex-1 bg-white border border-[#FADCD5] rounded-2xl py-5 flex items-center justify-center space-x-2 text-[#8E6043] font-bold hover:bg-gray-50 transition-all shadow-sm active:scale-[0.98]">
-                <RefreshCw size={18} className="text-[#ED6A45]" />
-                <span>Re-sync calendar</span>
+        <nav className="flex flex-row lg:flex-col flex-1 space-x-1 lg:space-x-0 lg:space-y-2 justify-around lg:justify-start w-full lg:w-auto">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id as any)}
+                className={`flex flex-col lg:flex-row items-center lg:space-x-4 px-3 py-2 lg:px-4 lg:py-3 rounded-xl transition-all whitespace-nowrap ${
+                  isActive ? 'text-[#ED6A45] font-semibold bg-[#ED6A45]/5 lg:bg-transparent' : 'text-gray-400 hover:bg-gray-50'
+                }`}
+              >
+                <Icon size={20} className={isActive ? 'text-[#ED6A45]' : 'text-gray-400'} />
+                <span className="text-[10px] lg:text-base lg:inline mt-1 lg:mt-0">{item.label}</span>
               </button>
-              <button onClick={handleClearCalendar} className="flex-1 bg-white border border-red-100 rounded-2xl py-5 flex items-center justify-center space-x-2 text-red-500 font-bold hover:bg-red-50 transition-all shadow-sm active:scale-[0.98]">
-                <Trash2 size={18} />
-                <span>Clear storage</span>
-              </button>
-            </div>
-          </div>
-        )}
+            );
+          })}
+        </nav>
 
-        {allEvents === null && (
-          <button onClick={() => fileInputRef.current?.click()} className="w-full bg-white border-2 border-dashed border-[#FADCD5] rounded-3xl p-10 flex flex-col items-center justify-center space-y-4 hover:bg-[#FEF8F6] transition-all group">
-            <div className="p-4 bg-[#FEF1EE] border border-[#FADCD5] rounded-2xl shadow-sm group-hover:scale-110 transition-transform">
-              <Calendar className="text-[#ED6A45]" size={32} />
-            </div>
-            <div className="text-center">
-              <span className="text-[#8E6043] font-bold text-xl block">Import your calendar</span>
-              <span className="text-gray-400 text-sm">One-time sync for persistent multi-day planning</span>
-            </div>
-          </button>
-        )}
-
-        <button 
-          onClick={() => setView('dashboard')}
-          className="w-full bg-[#8E6043] text-white rounded-[2rem] py-8 flex items-center justify-center space-x-3 hover:opacity-90 transition-all shadow-2xl active:scale-[0.99] group mt-4"
-        >
-          <span className="text-2xl font-black tracking-tight uppercase">Unlock My Day</span>
-          <ArrowRight className="group-hover:translate-x-2 transition-transform" size={32} />
+        <button className="hidden lg:flex items-center space-x-4 px-4 py-3 text-gray-400 hover:text-red-500 transition-colors mt-auto whitespace-nowrap">
+          <LogOut size={20} />
+          <span className="hidden lg:inline">Log out</span>
         </button>
-      </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 bg-[#FDF8F5] m-2 lg:m-4 rounded-2xl lg:rounded-[3rem] p-4 sm:p-6 lg:p-10 mb-20 lg:mb-4 overflow-y-auto no-scrollbar relative">
+        {/* Top Bar - Header and Search */}
+        <header className="flex flex-col md:flex-row items-center justify-between mb-6 lg:mb-10 space-y-4 md:space-y-0">
+          <div className="space-y-1 text-center md:text-left">
+            <h2 className="text-xl lg:text-2xl font-bold text-gray-900">Good Morning, Harvey!</h2>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-4 lg:space-x-8 w-full md:w-auto">
+            <div className="relative w-full sm:w-64 lg:w-96 group order-2 sm:order-1">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-[#ED6A45] transition-colors" size={18} />
+              <input 
+                type="text" 
+                placeholder="Search here" 
+                className="w-full bg-white rounded-full py-3 pl-12 pr-12 border-none shadow-sm focus:ring-2 focus:ring-[#ED6A45]/20 outline-none text-sm"
+              />
+              <Sliders className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+            </div>
+
+            <div className="flex items-center space-x-4 order-1 sm:order-2">
+              <div className="w-8 h-8 lg:w-10 lg:h-10 rounded-full bg-[#ED6A45] overflow-hidden border-2 border-white shadow-sm">
+                <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=Harvey" alt="User Avatar" />
+              </div>
+              <div className="flex items-center space-x-2">
+                <span className="font-bold text-gray-900 text-sm lg:text-base">Harvey Specter</span>
+                <ChevronDown size={16} className="text-gray-400" />
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* Dynamic Content Mapping */}
+        <div className="w-full">
+          {activeTab === 'home' && (
+            <HomeView 
+              startTime={startTime} setStartTime={setStartTime}
+              endTime={endTime} setEndTime={setEndTime}
+              focusGoal={focusGoal} setFocusGoal={setFocusGoal}
+              peakWindow={peakWindow} setPeakWindow={setPeakWindow}
+              allEvents={allEvents} onEventsParsed={handleEventsParsed}
+              onClearSync={handleClearCalendar}
+              onDashboard={() => setActiveTab('dashboard')}
+              onSaveSettings={handleSaveAll}
+              isDirty={isSettingsDirty}
+            />
+          )}
+
+          {activeTab === 'dashboard' && (
+            <DashboardView 
+              startTime={startTime}
+              endTime={endTime}
+              focusGoal={focusGoal}
+              peakWindow={peakWindow}
+              calendarEvents={allEvents || []}
+              onBack={() => setActiveTab('home')}
+            />
+          )}
+
+          {activeTab !== 'home' && activeTab !== 'dashboard' && (
+            <div className="flex flex-col items-center justify-center h-[50vh] text-gray-300">
+              <BarChart2 size={64} className="opacity-20 mb-4" />
+              <p className="text-lg lg:text-xl font-bold">Content under development</p>
+            </div>
+          )}
+        </div>
+      </main>
     </div>
   );
 };
