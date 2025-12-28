@@ -1,3 +1,4 @@
+
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Coffee, ChevronLeft, Calendar, Play, Pause, RotateCcw, Timer as TimerIcon, CheckCircle2 } from 'lucide-react';
 import { CalendarEvent } from '../App';
@@ -273,8 +274,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({
   return (
     <div className="space-y-8 lg:space-y-12">
       {/* Date Selector */}
-      <div className="flex items-center -mt-4">
-        <div className="flex items-center space-x-3 lg:space-x-4 overflow-x-auto no-scrollbar pt-4 pb-4 px-4 flex-1">
+      <div className="flex justify-center -mt-8">
+        <div className="flex items-center space-x-3 lg:space-x-4 overflow-x-auto no-scrollbar pt-10 pb-4 px-4 w-full justify-center">
           {days.map((d, i) => (
             <button
               key={i}
