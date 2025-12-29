@@ -1,6 +1,6 @@
 
 import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { Coffee, ChevronLeft, Calendar, Play, Pause, RotateCcw, Timer as TimerIcon, CheckCircle2 } from 'lucide-react';
+import { Coffee, ChevronLeft, Calendar, Play, Pause, RotateCcw, Timer as TimerIcon, CheckCircle2, Zap, BarChart3, AlertCircle, PlusCircle, MinusCircle } from 'lucide-react';
 import { CalendarEvent } from '../App';
 
 interface DashboardViewProps {
@@ -8,6 +8,9 @@ interface DashboardViewProps {
   endTime: { hour: string; minute: string; period: string };
   focusGoal: number;
   peakWindow: string;
+  shortBreak: number;
+  longBreak: number;
+  isMuted: boolean;
   calendarEvents: CalendarEvent[];
   onBack: () => void;
 }
@@ -19,6 +22,7 @@ interface ScheduleItem {
   startTime: string; // HH:mm
   duration: number; // in minutes
   color?: string;
+  isNew?: boolean;
 }
 
 const IST_TIMEZONE = 'Asia/Kolkata';
@@ -28,8 +32,9 @@ const SessionTimer: React.FC<{
   duration: number; 
   type: string; 
   isCompleted: boolean;
+  isMuted: boolean;
   onComplete: () => void;
-}> = ({ duration, type, isCompleted, onComplete }) => {
+}> = ({ duration, type, isCompleted, isMuted, onComplete }) => {
   const [timeLeft, setTimeLeft] = useState(isCompleted ? 0 : duration * 60);
   const [isRunning, setIsRunning] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -47,10 +52,9 @@ const SessionTimer: React.FC<{
     } else {
       if (timerRef.current) clearInterval(timerRef.current);
       
-      // Natural finish
       if (timeLeft === 0 && isRunning && !isCompleted) {
         setIsRunning(false);
-        if (audioRef.current) {
+        if (!isMuted && audioRef.current) {
           audioRef.current.play().catch(e => console.log("Audio play failed", e));
         }
         onComplete();
@@ -59,9 +63,8 @@ const SessionTimer: React.FC<{
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [isRunning, timeLeft, isCompleted, onComplete]);
+  }, [isRunning, timeLeft, isCompleted, isMuted, onComplete]);
 
-  // Sync state if external completion happens
   useEffect(() => {
     if (isCompleted) {
       setTimeLeft(0);
@@ -85,7 +88,7 @@ const SessionTimer: React.FC<{
           <span className="text-[10px] font-black uppercase tracking-widest leading-none">Done</span>
         </div>
         <button 
-          onClick={() => { setTimeLeft(duration * 60); onComplete(); /* This toggle logic in parent handles unstriking */ }}
+          onClick={() => { setTimeLeft(duration * 60); onComplete(); }}
           className="p-2 sm:p-3 bg-white border border-gray-100 text-gray-400 rounded-full hover:bg-gray-50 transition-all active:scale-90 shadow-sm"
         >
           <RotateCcw size={14} className="sm:w-4 sm:h-4" />
@@ -128,10 +131,16 @@ const SessionTimer: React.FC<{
 };
 
 const DashboardView: React.FC<DashboardViewProps> = ({ 
-  startTime, endTime, focusGoal, peakWindow, calendarEvents, onBack 
+  startTime, endTime, focusGoal, peakWindow, shortBreak, longBreak, isMuted, calendarEvents, onBack 
 }) => {
   const [selectedDayIndex, setSelectedDayIndex] = useState(0);
+  const [statsMode, setStatsMode] = useState<'daily' | 'weekly'>('daily');
   const [completedSessions, setCompletedSessions] = useState<Set<string>>(new Set());
+  
+  // Track manual adjustments for specific days
+  const [manualAdjustment, setManualAdjustment] = useState<Record<string, number>>({});
+  const [newSessionIds, setNewSessionIds] = useState<Set<string>>(new Set());
+  const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const days = useMemo(() => {
     return Array.from({ length: 7 }).map((_, i) => {
@@ -162,16 +171,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
 
   const activeDay = days[selectedDayIndex];
 
-  const handleSessionComplete = (id: string) => {
-    setCompletedSessions(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const schedule = useMemo(() => {
+  const generateSchedule = (targetDay: typeof days[0], overrideGoal?: number) => {
     const items: ScheduleItem[] = [];
     const toMinutes = (h: string, m: string, p: string) => {
       let hours = parseInt(h);
@@ -189,7 +189,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
     const dayEndMins = toMinutes(endTime.hour, endTime.minute, endTime.period);
 
     const dayEvents = calendarEvents
-      .filter(e => e.date === activeDay.yyyymmdd)
+      .filter(e => e.date === targetDay.yyyymmdd)
       .map(e => {
         const [h, m] = e.startTime.split(':');
         const [eh, em] = e.endTime.split(':');
@@ -202,14 +202,20 @@ const DashboardView: React.FC<DashboardViewProps> = ({
       .sort((a, b) => a.startMins - b.startMins);
 
     let currentTime = dayStartMins;
-    let focusRemaining = focusGoal * 60;
+    const currentAdj = manualAdjustment[targetDay.yyyymmdd] || 0;
+    const effectiveFocusGoal = overrideGoal !== undefined ? overrideGoal : (focusGoal + currentAdj);
+    let focusRemaining = effectiveFocusGoal * 60;
     let lastType: string | null = null;
     let hasLongBreakAnchor = false;
 
+    // Peak ranges updated to better fit common expectations + user examples
     const peakRanges: Record<string, [number, number]> = {
-      'Morning': [480, 720], 'Afternoon': [720, 1020], 'Evening': [1020, 1260], 'Late Night': [1260, 1440]
+      'Morning': [480, 720],    // 8am - 12pm
+      'Afternoon': [840, 1020],  // 2pm - 5pm
+      'Evening': [1080, 1260],  // 6pm - 9pm
+      'Late Night': [1260, 1440] // 9pm - 12am
     };
-    const [peakStart, peakEnd] = peakRanges[peakWindow] || [480, 720];
+    const [peakStart, peakEnd] = peakRanges[peakWindow] || [840, 1020];
     const eventColors = ['bg-[#A9C5D3]', 'bg-[#FADCD5]', 'bg-[#D9CCE8]', 'bg-[#F5D5B8]'];
     let colorIdx = 0;
 
@@ -217,10 +223,12 @@ const DashboardView: React.FC<DashboardViewProps> = ({
 
     const addSession = (type: ScheduleItem['type'], label: string, duration: number, color?: string) => {
       if (duration <= 0) return;
+      const id = `${targetDay.yyyymmdd}-${type}-${currentTime}`;
       items.push({
-        id: `${activeDay.yyyymmdd}-${type}-${currentTime}`, // Unique per day and time
+        id,
         type, label, duration, color: color || eventColors[colorIdx++ % eventColors.length],
-        startTime: formatTime(currentTime)
+        startTime: formatTime(currentTime),
+        isNew: newSessionIds.has(id)
       });
       currentTime += duration;
       lastType = type;
@@ -229,7 +237,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
     while (currentTime < dayEndMins) {
       if (currentTime >= 780 && currentTime < 840 && !hasLongBreakAnchor) {
         if (!isBreakType(lastType || '')) {
-          addSession('break', 'Lunch Break', 60);
+          addSession('break', 'Lunch Break', longBreak);
           hasLongBreakAnchor = true;
           continue;
         }
@@ -245,16 +253,28 @@ const DashboardView: React.FC<DashboardViewProps> = ({
       const gap = nextMeeting ? nextMeeting.startMins - currentTime : dayEndMins - currentTime;
       if (gap > 0) {
         if (lastType === 'focus' || lastType === 'meeting' || !lastType) {
-          const breakDur = Math.min(gap >= 45 ? 45 : 15, gap);
+          const breakDur = Math.min(gap >= 45 ? 45 : shortBreak, gap);
           addSession('break', breakDur >= 45 ? 'Wellness Break' : 'Short break', breakDur);
         } 
         else {
           const inPeak = currentTime >= peakStart && currentTime < peakEnd;
-          let focusDur = Math.min(inPeak ? 90 : 45, gap);
+          // Determine focus duration based on being in peak window and user rules
+          let focusDur = gap;
+          if (inPeak) {
+             // For "Add Focus" logic, user wants 1h blocks or 45m blocks
+             if (currentAdj > 0) {
+               focusDur = Math.min(focusRemaining >= 60 && (focusGoal + currentAdj - focusGoal) < 1 ? 60 : 45, gap);
+             } else {
+               focusDur = Math.min(90, gap);
+             }
+          } else {
+             focusDur = Math.min(45, gap);
+          }
           
           if (focusRemaining > 0) {
             focusDur = Math.min(focusDur, focusRemaining);
-            addSession('focus', inPeak ? 'Peak Focus Session' : 'Standard Focus', focusDur, 'bg-white');
+            const isPeak = inPeak && focusDur >= 45;
+            addSession('focus', isPeak ? 'Peak Focus Session' : 'Standard Focus', focusDur, isPeak ? 'bg-[#FADCD5]' : 'bg-white');
             focusRemaining -= focusDur;
           } else {
             addSession('hobby', 'Creative Hobby Block', Math.min(gap, 60), 'bg-[#E1EED9]');
@@ -269,20 +289,118 @@ const DashboardView: React.FC<DashboardViewProps> = ({
       }
     }
     return items;
-  }, [startTime, endTime, focusGoal, peakWindow, calendarEvents, activeDay]);
+  };
+
+  const schedule = useMemo(() => generateSchedule(activeDay), [activeDay, startTime, endTime, focusGoal, peakWindow, shortBreak, longBreak, calendarEvents, manualAdjustment, newSessionIds]);
+
+  const stats = useMemo(() => {
+    const calcForSchedule = (s: ScheduleItem[]) => {
+      let focusMins = 0; // Peak + Standard + Meeting
+      let breakMins = 0; // Break + Wellness + Lunch + Hobby
+      s.forEach(item => {
+        if (item.type === 'focus' || item.type === 'meeting') {
+          focusMins += item.duration;
+        } else {
+          breakMins += item.duration;
+        }
+      });
+      return { focusMins, breakMins };
+    };
+
+    if (statsMode === 'daily') {
+      return calcForSchedule(schedule);
+    } else {
+      let totalFocus = 0;
+      let totalBreak = 0;
+      days.forEach(d => {
+        const s = generateSchedule(d);
+        const { focusMins, breakMins } = calcForSchedule(s);
+        totalFocus += focusMins;
+        totalBreak += breakMins;
+      });
+      return { focusMins: totalFocus, breakMins: totalBreak };
+    }
+  }, [statsMode, schedule, days, startTime, endTime, focusGoal, peakWindow, shortBreak, longBreak, calendarEvents, manualAdjustment]);
+
+  const goalDiff = useMemo(() => {
+    if (statsMode !== 'daily') return null;
+    const currentMins = stats.focusMins;
+    const goalMins = focusGoal * 60;
+    const diff = currentMins - goalMins;
+    
+    if (Math.abs(diff) < 15) return 'match';
+    return diff < 0 ? 'under' : 'over';
+  }, [stats.focusMins, focusGoal, statsMode]);
+
+  const handleAdjustGoal = (direction: 'add' | 'reduce') => {
+    const currentMins = stats.focusMins;
+    const goalMins = focusGoal * 60;
+    const diffMins = Math.abs(currentMins - goalMins);
+    const diffHours = diffMins / 60;
+    
+    if (direction === 'add') {
+      // Logic: 
+      // If diff < 1h: add one 1-hour session.
+      // If diff >= 1h: break into max 45 min sessions.
+      // We adjust the manualAdjustment state to trigger re-generation with a higher effective goal.
+      const adjustment = diffMins < 60 ? 1 : Math.ceil(diffHours + 0.5);
+      
+      setManualAdjustment(prev => ({
+        ...prev,
+        [activeDay.yyyymmdd]: (prev[activeDay.yyyymmdd] || 0) + adjustment
+      }));
+
+      // Identify the new sessions created for auto-scroll
+      // We'll wait for the next render to find the new IDs
+      setTimeout(() => {
+        const firstNew = schedule.find(item => !completedSessions.has(item.id) && item.type === 'focus');
+        if (firstNew) {
+           const id = firstNew.id;
+           setNewSessionIds(prev => new Set(prev).add(id));
+           itemRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 100);
+
+    } else {
+      // Logic: Drop sessions based on diff
+      const reduction = Math.ceil(diffHours);
+      setManualAdjustment(prev => ({
+        ...prev,
+        [activeDay.yyyymmdd]: (prev[activeDay.yyyymmdd] || 0) - reduction
+      }));
+    }
+  };
+
+  const handleSessionComplete = (id: string) => {
+    setCompletedSessions(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const formatHours = (mins: number) => {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  };
 
   return (
-    <div className="space-y-8 lg:space-y-12">
+    <div className="space-y-8 lg:space-y-12 animate-in fade-in duration-500 pb-20">
       {/* Date Selector */}
-      <div className="flex justify-center -mt-8">
-        <div className="flex items-center space-x-3 lg:space-x-4 overflow-x-auto no-scrollbar pt-10 pb-4 px-4 w-full justify-center">
+      <div className="flex justify-center -mt-10">
+        <div className="flex items-center space-x-3 lg:space-x-4 overflow-x-auto no-scrollbar pt-14 pb-6 px-4 w-full justify-center">
           {days.map((d, i) => (
             <button
               key={i}
-              onClick={() => setSelectedDayIndex(i)}
-              className={`flex flex-col items-center justify-center min-w-[70px] lg:min-w-[90px] h-[80px] lg:h-[100px] rounded-3xl lg:rounded-[2.5rem] transition-all shadow-sm ${
+              onClick={() => {
+                setSelectedDayIndex(i);
+                setStatsMode('daily');
+              }}
+              className={`flex flex-col items-center justify-center min-w-[70px] lg:min-w-[90px] h-[80px] lg:h-[100px] rounded-3xl lg:rounded-[2.5rem] transition-all shadow-sm shrink-0 ${
                 selectedDayIndex === i 
-                  ? 'bg-black text-white scale-105 z-10' 
+                  ? 'bg-black text-white scale-105 z-10 shadow-xl' 
                   : 'bg-white text-gray-400 border border-gray-50'
               }`}
             >
@@ -293,9 +411,87 @@ const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
+      {/* Summary Section */}
+      <div className="bg-white rounded-[2.5rem] p-6 sm:p-8 lg:p-10 shadow-sm border border-gray-50 flex flex-col space-y-6 lg:space-y-8">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div className="flex items-center space-x-3">
+            <div className="p-2 lg:p-3 bg-[#ED6A45]/10 rounded-2xl text-[#ED6A45]">
+              <BarChart3 size={24} />
+            </div>
+            <h3 className="text-xl lg:text-2xl font-black text-gray-900 tracking-tight">Performance Summary</h3>
+          </div>
+          
+          <div className="flex bg-gray-100 p-1.5 rounded-2xl w-full sm:w-auto">
+            <button 
+              onClick={() => setStatsMode('daily')}
+              className={`flex-1 sm:px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${statsMode === 'daily' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400'}`}
+            >
+              Daily
+            </button>
+            <button 
+              onClick={() => setStatsMode('weekly')}
+              className={`flex-1 sm:px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${statsMode === 'weekly' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400'}`}
+            >
+              Weekly
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-8">
+          <div className="bg-[#ED6A45]/5 rounded-3xl p-6 lg:p-8 border border-[#ED6A45]/10 flex items-center space-x-6">
+            <div className="w-12 h-12 lg:w-16 lg:h-16 bg-white rounded-full flex items-center justify-center shadow-sm text-[#ED6A45]">
+              <Zap size={24} className="lg:w-8 lg:h-8" />
+            </div>
+            <div>
+              <p className="text-[10px] lg:text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Total Focus</p>
+              <p className="text-2xl lg:text-4xl font-black text-gray-900 leading-none">{formatHours(stats.focusMins)}</p>
+            </div>
+          </div>
+          <div className="bg-green-50 rounded-3xl p-6 lg:p-8 border border-green-100 flex items-center space-x-6">
+            <div className="w-12 h-12 lg:w-16 lg:h-16 bg-white rounded-full flex items-center justify-center shadow-sm text-green-600">
+              <Coffee size={24} className="lg:w-8 lg:h-8" />
+            </div>
+            <div>
+              <p className="text-[10px] lg:text-xs font-black text-gray-400 uppercase tracking-widest mb-1">Total Breaks</p>
+              <p className="text-2xl lg:text-4xl font-black text-gray-900 leading-none">{formatHours(stats.breakMins)}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Goal Adjustment Prompt */}
+        {statsMode === 'daily' && goalDiff && goalDiff !== 'match' && (
+          <div className={`rounded-3xl p-6 lg:p-8 border flex flex-col sm:flex-row items-center justify-between gap-6 transition-all animate-in fade-in slide-in-from-top-2 duration-300 ${
+            goalDiff === 'under' ? 'bg-orange-50 border-orange-100 text-orange-800' : 'bg-blue-50 border-blue-100 text-blue-800'
+          }`}>
+            <div className="flex items-center space-x-4 text-center sm:text-left">
+              <div className={`p-3 rounded-2xl bg-white shadow-sm flex-shrink-0 ${goalDiff === 'under' ? 'text-orange-500' : 'text-blue-500'}`}>
+                <AlertCircle size={24} />
+              </div>
+              <div className="space-y-1">
+                <p className="font-black uppercase tracking-widest text-[10px] opacity-60">Goal Alignment</p>
+                <p className="text-sm lg:text-base font-bold leading-tight">
+                  {goalDiff === 'under' 
+                    ? `You are ${formatHours(Math.abs(stats.focusMins - focusGoal * 60))} short of your daily goal. Add focus session to your ${peakWindow} peak window?`
+                    : `Your schedule exceeds your goal by ${formatHours(stats.focusMins - focusGoal * 60)}. Reduce some focus sessions from your daily timeline?`}
+                </p>
+              </div>
+            </div>
+            <button 
+              onClick={() => handleAdjustGoal(goalDiff === 'under' ? 'add' : 'reduce')}
+              className={`px-8 py-4 rounded-2xl font-black text-sm uppercase tracking-widest shadow-lg transition-all active:scale-95 flex items-center space-x-2 whitespace-nowrap ${
+                goalDiff === 'under' ? 'bg-[#ED6A45] text-white hover:bg-[#d55e3c]' : 'bg-black text-white hover:bg-gray-800'
+              }`}
+            >
+              {goalDiff === 'under' ? <PlusCircle size={18} /> : <MinusCircle size={18} />}
+              <span>{goalDiff === 'under' ? 'Add Focus' : 'Reduce Focus'}</span>
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Header */}
       <div className="space-y-1 lg:space-y-2 text-center md:text-left">
-        <p className="text-[#ED6A45] font-bold text-[10px] lg:text-sm uppercase tracking-[0.2em]">{activeDay.day} SUMMARY</p>
+        <p className="text-[#ED6A45] font-bold text-[10px] lg:text-sm uppercase tracking-[0.2em]">{activeDay.day} TIMELINE</p>
         <h2 className="text-2xl lg:text-4xl font-black text-gray-900 tracking-tight">{activeDay.fullDateString}</h2>
       </div>
 
@@ -303,8 +499,14 @@ const DashboardView: React.FC<DashboardViewProps> = ({
       <div className="space-y-6 lg:space-y-8">
         {schedule.length > 0 ? schedule.map((item) => {
           const isDone = completedSessions.has(item.id);
+          const isNewlyAdded = newSessionIds.has(item.id);
           return (
-            <div key={item.id} className={`flex flex-col md:flex-row items-stretch md:items-start space-y-2 md:space-y-0 md:space-x-6 lg:space-x-10 group transition-all duration-300 ${isDone ? 'opacity-50 grayscale-[0.2]' : ''}`}>
+            <div 
+              key={item.id} 
+              // Fix: TypeScript error in ref callback by ensuring it returns void instead of the element.
+              ref={el => { itemRefs.current[item.id] = el; }}
+              className={`flex flex-col md:flex-row items-stretch md:items-start space-y-2 md:space-y-0 md:space-x-6 lg:space-x-10 group transition-all duration-300 ${isDone ? 'opacity-50 grayscale-[0.2]' : ''} ${isNewlyAdded ? 'ring-4 ring-[#ED6A45]/20 rounded-3xl' : ''}`}
+            >
               <div className="w-full md:w-16 md:pt-6 flex-shrink-0">
                 <span className={`text-gray-400 font-bold tabular-nums text-base lg:text-lg block text-center md:text-left ${isDone ? 'line-through' : ''}`}>{item.startTime}</span>
               </div>
@@ -319,7 +521,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                       <span className={`text-gray-900 text-lg sm:text-xl lg:text-2xl font-black tracking-tight truncate ${isDone ? 'line-through' : ''}`}>{item.label}</span>
                       <span className="text-gray-400 font-bold text-[10px] sm:text-xs lg:text-sm uppercase tracking-wider">{item.duration} min rest period</span>
                     </div>
-                    <SessionTimer duration={item.duration} type={item.type} isCompleted={isDone} onComplete={() => handleSessionComplete(item.id)} />
+                    <SessionTimer duration={item.duration} type={item.type} isCompleted={isDone} isMuted={isMuted} onComplete={() => handleSessionComplete(item.id)} />
                   </div>
                 ) : (
                   <div className={`${item.color || 'bg-white'} rounded-3xl lg:rounded-[2.5rem] p-6 lg:p-10 flex flex-col justify-center shadow-sm border border-white/50 min-h-[120px] lg:min-h-[160px] transition-all hover:shadow-xl hover:-translate-y-1 ${isDone ? 'scale-[0.98]' : ''}`}>
@@ -338,7 +540,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                         </h3>
                       </div>
                       
-                      <SessionTimer duration={item.duration} type={item.type} isCompleted={isDone} onComplete={() => handleSessionComplete(item.id)} />
+                      <SessionTimer duration={item.duration} type={item.type} isCompleted={isDone} isMuted={isMuted} onComplete={() => handleSessionComplete(item.id)} />
                     </div>
                   </div>
                 )}

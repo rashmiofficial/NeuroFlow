@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import HomeView from './components/HomeView';
 import DashboardView from './components/DashboardView';
+import SettingsView from './components/SettingsView';
 
 export interface CalendarEvent {
   summary: string;
@@ -14,8 +15,6 @@ export interface CalendarEvent {
   durationMinutes: number;
   date: string;      // YYYYMMDD
 }
-
-const IST_TIMEZONE = 'Asia/Kolkata';
 
 const DB_NAME = 'FocusPlannerDB';
 const STORE_NAME = 'calendars';
@@ -71,14 +70,19 @@ const deleteCalendarFromDB = async () => {
 };
 
 const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'home' | 'dashboard' | 'statistics' | 'messages' | 'profile' | 'billings' | 'settings'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'dashboard' | 'statistics' | 'messages' | 'billings' | 'settings'>('home');
   
   const [startTime, setStartTime] = useState({ hour: '08', minute: '00', period: 'AM' });
   const [endTime, setEndTime] = useState({ hour: '06', minute: '00', period: 'PM' });
   const [focusGoal, setFocusGoal] = useState(7);
   const [peakWindow, setPeakWindow] = useState('Morning');
-  const [allEvents, setAllEvents] = useState<CalendarEvent[] | null>(null);
+  
+  // New Settings
+  const [shortBreak, setShortBreak] = useState(5);
+  const [longBreak, setLongBreak] = useState(30);
+  const [isMuted, setIsMuted] = useState(false);
 
+  const [allEvents, setAllEvents] = useState<CalendarEvent[] | null>(null);
   const [lastSaved, setLastSaved] = useState<any>(null);
   const [isCalendarDirty, setIsCalendarDirty] = useState(false);
 
@@ -89,13 +93,16 @@ const App: React.FC = () => {
     const fetchSettings = async () => {
       const stored = await loadSettingsFromDB();
       if (stored) {
-        setStartTime(stored.startTime);
-        setEndTime(stored.endTime);
-        setFocusGoal(stored.focusGoal);
-        setPeakWindow(stored.peakWindow);
+        setStartTime(stored.startTime || { hour: '08', minute: '00', period: 'AM' });
+        setEndTime(stored.endTime || { hour: '06', minute: '00', period: 'PM' });
+        setFocusGoal(stored.focusGoal || 7);
+        setPeakWindow(stored.peakWindow || 'Morning');
+        setShortBreak(stored.shortBreak || 5);
+        setLongBreak(stored.longBreak || 30);
+        setIsMuted(stored.isMuted || false);
         setLastSaved(stored);
       } else {
-        const initial = { startTime, endTime, focusGoal, peakWindow };
+        const initial = { startTime, endTime, focusGoal, peakWindow, shortBreak, longBreak, isMuted };
         setLastSaved(initial);
       }
     };
@@ -107,11 +114,14 @@ const App: React.FC = () => {
     JSON.stringify(lastSaved.endTime) !== JSON.stringify(endTime) ||
     lastSaved.focusGoal !== focusGoal ||
     lastSaved.peakWindow !== peakWindow ||
+    lastSaved.shortBreak !== shortBreak ||
+    lastSaved.longBreak !== longBreak ||
+    lastSaved.isMuted !== isMuted ||
     isCalendarDirty
   ) : false;
 
   const handleSaveAll = async () => {
-    const settings = { startTime, endTime, focusGoal, peakWindow };
+    const settings = { startTime, endTime, focusGoal, peakWindow, shortBreak, longBreak, isMuted };
     await saveSettingsToDB(settings);
     if (allEvents) {
       await saveCalendarToDB(allEvents);
@@ -122,13 +132,16 @@ const App: React.FC = () => {
     setIsCalendarDirty(false);
   };
 
+  const handleLogout = () => {
+    // Simple reset for demo
+    window.location.reload();
+  };
+
   const navItems = [
     { id: 'home', label: 'Home', icon: Home },
     { id: 'dashboard', label: 'Dashboard', icon: BarChart2 },
     { id: 'messages', label: 'Messages', icon: MessageSquare },
-    { id: 'profile', label: 'Profile', icon: User },
     { id: 'billings', label: 'Billings', icon: CreditCard },
-    { id: 'calendar', label: 'Calendar', icon: Calendar },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
@@ -144,7 +157,7 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col lg:flex-row min-h-screen bg-white overflow-x-hidden">
-      {/* Navigation Bar - Sticky bottom for mobile/tablet, Sidebar for Desktop */}
+      {/* Navigation Bar */}
       <aside className="fixed bottom-0 left-0 w-full lg:static lg:w-64 border-t lg:border-t-0 lg:border-r border-gray-100 bg-white lg:bg-transparent flex flex-row lg:flex-col p-2 lg:p-8 items-center lg:items-stretch z-50 overflow-x-auto no-scrollbar lg:overflow-visible">
         <div className="hidden lg:flex items-center space-x-2 px-2 lg:mb-12">
           <div className="grid grid-cols-2 gap-1 flex-shrink-0">
@@ -174,7 +187,10 @@ const App: React.FC = () => {
           })}
         </nav>
 
-        <button className="hidden lg:flex items-center space-x-4 px-4 py-3 text-gray-400 hover:text-red-500 transition-colors mt-auto whitespace-nowrap">
+        <button 
+          onClick={handleLogout}
+          className="hidden lg:flex items-center space-x-4 px-4 py-3 text-gray-400 hover:text-red-500 transition-colors mt-auto whitespace-nowrap"
+        >
           <LogOut size={20} />
           <span className="hidden lg:inline">Log out</span>
         </button>
@@ -182,7 +198,6 @@ const App: React.FC = () => {
 
       {/* Main Content */}
       <main className="flex-1 bg-[#FDF8F5] m-2 lg:m-4 rounded-2xl lg:rounded-[3rem] p-4 sm:p-6 lg:p-10 mb-20 lg:mb-4 overflow-y-auto no-scrollbar relative">
-        {/* Top Bar - Header and Search */}
         <header className="flex flex-col md:flex-row items-center justify-between mb-6 lg:mb-10 space-y-4 md:space-y-0">
           <div className="space-y-1 text-center md:text-left">
             <h2 className="text-xl lg:text-2xl font-bold text-gray-900">Good Morning, Harvey!</h2>
@@ -211,7 +226,6 @@ const App: React.FC = () => {
           </div>
         </header>
 
-        {/* Dynamic Content Mapping */}
         <div className="w-full">
           {activeTab === 'home' && (
             <HomeView 
@@ -233,12 +247,26 @@ const App: React.FC = () => {
               endTime={endTime}
               focusGoal={focusGoal}
               peakWindow={peakWindow}
+              shortBreak={shortBreak}
+              longBreak={longBreak}
+              isMuted={isMuted}
               calendarEvents={allEvents || []}
               onBack={() => setActiveTab('home')}
             />
           )}
 
-          {activeTab !== 'home' && activeTab !== 'dashboard' && (
+          {activeTab === 'settings' && (
+            <SettingsView 
+              shortBreak={shortBreak} setShortBreak={setShortBreak}
+              longBreak={longBreak} setLongBreak={setLongBreak}
+              isMuted={isMuted} setIsMuted={setIsMuted}
+              isDirty={isSettingsDirty}
+              onSave={handleSaveAll}
+              onLogout={handleLogout}
+            />
+          )}
+
+          {activeTab !== 'home' && activeTab !== 'dashboard' && activeTab !== 'settings' && (
             <div className="flex flex-col items-center justify-center h-[50vh] text-gray-300">
               <BarChart2 size={64} className="opacity-20 mb-4" />
               <p className="text-lg lg:text-xl font-bold">Content under development</p>

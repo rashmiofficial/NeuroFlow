@@ -207,98 +207,104 @@ const HomeView: React.FC<HomeViewProps> = ({
         </section>
 
         {/* Setup Controls */}
-        <section className="bg-white rounded-3xl lg:rounded-[3rem] p-6 lg:p-10 shadow-sm border border-gray-50 space-y-8 lg:space-y-10">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
-            <h3 className="text-base lg:text-lg font-black text-gray-900 uppercase tracking-widest">Setup Controls</h3>
-            <button 
-              onClick={onSaveSettings}
-              disabled={!isDirty}
-              className={`flex items-center space-x-2 px-6 py-3 rounded-2xl font-bold transition-all shadow-sm w-full sm:w-auto justify-center ${
-                isDirty 
-                  ? 'bg-black text-white hover:bg-gray-800' 
-                  : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-              }`}
-            >
-              <Save size={18} />
-              <span>Save Settings</span>
-            </button>
+        <section>
+          <div className="flex justify-between items-center mb-4 lg:mb-6">
+            <h3 className="text-lg lg:text-xl font-bold text-gray-900">Setup Controls</h3>
           </div>
+          <div className="bg-white rounded-3xl lg:rounded-[3rem] p-6 lg:p-10 shadow-sm border border-gray-50 space-y-8 lg:space-y-10">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 lg:gap-8">
+              <div className="space-y-4">
+                <div className="flex items-center space-x-2 text-[#ED6A45] font-bold text-xs uppercase tracking-widest">
+                  <LogIn size={16} /> <span>Daily Start</span>
+                </div>
+                <TimePicker value={startTime} onChange={setStartTime} />
+              </div>
+              <div className="space-y-4">
+                <div className="flex items-center space-x-2 text-[#ED6A45] font-bold text-xs uppercase tracking-widest">
+                  <LogOut size={16} /> <span>Daily End</span>
+                </div>
+                <TimePicker value={endTime} onChange={setEndTime} />
+              </div>
+            </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 lg:gap-8">
             <div className="space-y-4">
               <div className="flex items-center space-x-2 text-[#ED6A45] font-bold text-xs uppercase tracking-widest">
-                <LogIn size={16} /> <span>Daily Start</span>
+                <Clock size={16} /> <span>Daily Focus Goal</span>
               </div>
-              <TimePicker value={startTime} onChange={setStartTime} />
+              <div className="bg-[#FDF8F5] rounded-3xl p-4 lg:p-6 flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-8">
+                <input 
+                  type="range" min="1" max="12" value={focusGoal}
+                  onChange={(e) => setFocusGoal(parseInt(e.target.value))}
+                  className="w-full sm:flex-1 accent-[#ED6A45]"
+                />
+                <span className="text-2xl lg:text-3xl font-bold text-gray-800">{focusGoal}h</span>
+              </div>
             </div>
+
             <div className="space-y-4">
               <div className="flex items-center space-x-2 text-[#ED6A45] font-bold text-xs uppercase tracking-widest">
-                <LogOut size={16} /> <span>Daily End</span>
+                <Zap size={16} /> <span>Peak Energy Window</span>
               </div>
-              <TimePicker value={endTime} onChange={setEndTime} />
+              <EnergyWindow selected={peakWindow} onSelect={setPeakWindow} />
             </div>
-          </div>
 
-          <div className="space-y-4">
-            <div className="flex items-center space-x-2 text-[#ED6A45] font-bold text-xs uppercase tracking-widest">
-              <Clock size={16} /> <span>Daily Focus Goal</span>
-            </div>
-            <div className="bg-[#FDF8F5] rounded-3xl p-4 lg:p-6 flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-8">
-              <input 
-                type="range" min="1" max="12" value={focusGoal}
-                onChange={(e) => setFocusGoal(parseInt(e.target.value))}
-                className="w-full sm:flex-1 accent-[#ED6A45]"
-              />
-              <span className="text-2xl lg:text-3xl font-bold text-gray-800">{focusGoal}h</span>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex items-center space-x-2 text-[#ED6A45] font-bold text-xs uppercase tracking-widest">
-              <Zap size={16} /> <span>Peak Energy Window</span>
-            </div>
-            <EnergyWindow selected={peakWindow} onSelect={setPeakWindow} />
-          </div>
-
-          <div className="pt-4 space-y-6">
-            <div className="flex flex-col sm:flex-row gap-4">
-              <input 
-                type="file" ref={fileInputRef} 
-                onChange={handleFileChange} 
-                accept=".ics" className="hidden" 
-              />
-              {allEvents ? (
-                <>
-                  <button onClick={() => fileInputRef.current?.click()} className="flex-1 bg-white border border-[#FADCD5] rounded-2xl py-4 flex items-center justify-center space-x-2 text-[#8E6043] font-bold hover:bg-gray-50 transition-all shadow-sm">
-                    <RefreshCw size={18} className="text-[#ED6A45]" />
-                    <span>Update Calendar</span>
+            <div className="pt-4 space-y-6">
+              <div className="flex flex-col sm:flex-row gap-4">
+                <input 
+                  type="file" ref={fileInputRef} 
+                  onChange={handleFileChange} 
+                  accept=".ics" className="hidden" 
+                />
+                {allEvents ? (
+                  <>
+                    <button onClick={() => fileInputRef.current?.click()} className="flex-1 bg-white border border-[#FADCD5] rounded-2xl py-4 flex items-center justify-center space-x-2 text-[#8E6043] font-bold hover:bg-gray-50 transition-all shadow-sm">
+                      <RefreshCw size={18} className="text-[#ED6A45]" />
+                      <span>Update Calendar</span>
+                    </button>
+                    <button onClick={onClearSync} className="flex-1 bg-white border border-red-100 rounded-2xl py-4 flex items-center justify-center space-x-2 text-red-500 font-bold hover:bg-red-50 transition-all shadow-sm">
+                      <Trash2 size={18} />
+                      <span>Clear Storage</span>
+                    </button>
+                  </>
+                ) : (
+                  <button onClick={() => fileInputRef.current?.click()} className="w-full bg-[#ED6A45]/5 border-2 border-dashed border-[#ED6A45]/20 rounded-2xl py-8 flex items-center justify-center space-x-3 text-[#ED6A45] font-bold hover:bg-[#ED6A45]/10 transition-all">
+                    <Calendar size={20} />
+                    <span>Sync your calendar</span>
                   </button>
-                  <button onClick={onClearSync} className="flex-1 bg-white border border-red-100 rounded-2xl py-4 flex items-center justify-center space-x-2 text-red-500 font-bold hover:bg-red-50 transition-all shadow-sm">
-                    <Trash2 size={18} />
-                    <span>Clear Storage</span>
-                  </button>
-                </>
-              ) : (
-                <button onClick={() => fileInputRef.current?.click()} className="w-full bg-[#ED6A45]/5 border-2 border-dashed border-[#ED6A45]/20 rounded-2xl py-8 flex items-center justify-center space-x-3 text-[#ED6A45] font-bold hover:bg-[#ED6A45]/10 transition-all">
-                  <Calendar size={20} />
-                  <span>Sync your calendar</span>
+                )}
+              </div>
+
+              {/* Action Buttons: Save Settings & Open Dashboard */}
+              <div className="flex flex-col sm:flex-row items-center justify-end gap-4 mt-6">
+                {/* Secondary Button: Save Settings */}
+                <button 
+                  onClick={onSaveSettings}
+                  disabled={!isDirty}
+                  className={`flex-1 sm:flex-none px-10 py-5 lg:py-6 rounded-3xl lg:rounded-[2rem] font-bold transition-all shadow-md active:scale-95 flex items-center justify-center space-x-2 ${
+                    isDirty 
+                      ? 'bg-white border-2 border-gray-100 text-gray-800 hover:bg-gray-50' 
+                      : 'bg-gray-50 text-gray-300 border-2 border-gray-50 cursor-not-allowed shadow-none'
+                  }`}
+                >
+                  <Save size={20} />
+                  <span>Save Settings</span>
                 </button>
-              )}
-            </div>
 
-            {/* Repositioned Open Dashboard CTA */}
-            <button 
-              onClick={onDashboard}
-              disabled={isDirty}
-              className={`w-full rounded-3xl lg:rounded-[2rem] py-6 lg:py-8 flex items-center justify-center space-x-3 transition-all shadow-xl active:scale-[0.99] group ${
-                !isDirty 
-                  ? 'bg-black text-white hover:opacity-90' 
-                  : 'bg-gray-100 text-gray-400 cursor-not-allowed shadow-none'
-              }`}
-            >
-              <span className="text-lg lg:text-xl font-bold tracking-tight uppercase">Open Dashboard</span>
-              {!isDirty && <ArrowRight className="group-hover:translate-x-2 transition-transform" size={24} />}
-            </button>
+                {/* Primary Button: Open Dashboard */}
+                <button 
+                  onClick={onDashboard}
+                  disabled={isDirty}
+                  className={`flex-1 sm:flex-none px-10 py-5 lg:py-6 rounded-3xl lg:rounded-[2rem] flex items-center justify-center space-x-3 transition-all shadow-xl active:scale-[0.99] group ${
+                    !isDirty 
+                      ? 'bg-black text-white hover:opacity-90' 
+                      : 'bg-gray-100 text-gray-400 cursor-not-allowed shadow-none'
+                  }`}
+                >
+                  <span className="text-lg font-bold tracking-tight uppercase">Open Dashboard</span>
+                  {!isDirty && <ArrowRight className="group-hover:translate-x-2 transition-transform" size={24} />}
+                </button>
+              </div>
+            </div>
           </div>
         </section>
 
