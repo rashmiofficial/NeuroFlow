@@ -26,23 +26,52 @@ interface ScheduleItem {
 }
 
 const IST_TIMEZONE = 'Asia/Kolkata';
-const ALARM_SOUND_URL = 'https://actions.google.com/sounds/v1/alarms/beep_short.ogg';
+const START_SOUND_URL = 'https://actions.google.com/sounds/v1/alarms/digital_watch_alarm_long.ogg';
+const END_SOUND_URL = 'https://actions.google.com/sounds/v1/alarms/alarm_clock_short.ogg';
 
 const SessionTimer: React.FC<{ 
+  id: string;
   duration: number; 
   type: string; 
   isCompleted: boolean;
+  isActive: boolean;
   isMuted: boolean;
+  onStart: () => void;
   onComplete: () => void;
-}> = ({ duration, type, isCompleted, isMuted, onComplete }) => {
+}> = ({ id, duration, type, isCompleted, isActive, isMuted, onStart, onComplete }) => {
   const [timeLeft, setTimeLeft] = useState(isCompleted ? 0 : duration * 60);
   const [isRunning, setIsRunning] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const startAudioRef = useRef<HTMLAudioElement | null>(null);
+  const endAudioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
-    audioRef.current = new Audio(ALARM_SOUND_URL);
+    startAudioRef.current = new Audio(START_SOUND_URL);
+    endAudioRef.current = new Audio(END_SOUND_URL);
   }, []);
+
+  const playNotification = (audio: HTMLAudioElement | null) => {
+    if (!audio || isMuted) return;
+    audio.currentTime = 0;
+    audio.loop = true; // Loop to ensure it lasts 5 seconds
+    audio.play().catch(e => console.log("Audio play failed", e));
+    setTimeout(() => {
+      audio.pause();
+      audio.loop = false;
+      audio.currentTime = 0;
+    }, 5000);
+  };
+
+  // Sync isRunning with isActive for auto-play
+  useEffect(() => {
+    if (isActive && !isCompleted && !isRunning) {
+      setIsRunning(true);
+      playNotification(startAudioRef.current);
+    } else if (!isActive && isRunning) {
+      // If parent deactivates us, stop the timer
+      setIsRunning(false);
+    }
+  }, [isActive, isCompleted]);
 
   useEffect(() => {
     if (isRunning && timeLeft > 0) {
@@ -54,9 +83,7 @@ const SessionTimer: React.FC<{
       
       if (timeLeft === 0 && isRunning && !isCompleted) {
         setIsRunning(false);
-        if (!isMuted && audioRef.current) {
-          audioRef.current.play().catch(e => console.log("Audio play failed", e));
-        }
+        playNotification(endAudioRef.current);
         onComplete();
       }
     }
@@ -71,6 +98,20 @@ const SessionTimer: React.FC<{
       setIsRunning(false);
     }
   }, [isCompleted]);
+
+  const handleToggle = () => {
+    if (!isRunning) {
+      onStart(); // Tells parent to make this one the active session
+      if (!isActive) {
+        // If it wasn't already active (auto-play), play start sound now
+        playNotification(startAudioRef.current);
+      }
+    } else {
+      // Manual pause - should probably stop auto-play? 
+      // We'll just stop this one and let the user decide
+      setIsRunning(false);
+    }
+  };
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -110,7 +151,7 @@ const SessionTimer: React.FC<{
       
       <div className="flex space-x-1 sm:space-x-2">
         <button 
-          onClick={() => setIsRunning(!isRunning)}
+          onClick={handleToggle}
           className={`p-2 sm:p-3 rounded-full transition-all active:scale-90 shadow-sm ${
             isRunning 
               ? 'bg-gray-800 text-white hover:bg-gray-700' 
@@ -136,8 +177,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({
   const [selectedDayIndex, setSelectedDayIndex] = useState(0);
   const [statsMode, setStatsMode] = useState<'daily' | 'weekly'>('daily');
   const [completedSessions, setCompletedSessions] = useState<Set<string>>(new Set());
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   
-  // Track manual adjustments for specific days
   const [manualAdjustment, setManualAdjustment] = useState<Record<string, number>>({});
   const [newSessionIds, setNewSessionIds] = useState<Set<string>>(new Set());
   const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -208,12 +249,11 @@ const DashboardView: React.FC<DashboardViewProps> = ({
     let lastType: string | null = null;
     let hasLongBreakAnchor = false;
 
-    // Peak ranges updated to better fit common expectations + user examples
     const peakRanges: Record<string, [number, number]> = {
-      'Morning': [480, 720],    // 8am - 12pm
-      'Afternoon': [840, 1020],  // 2pm - 5pm
-      'Evening': [1080, 1260],  // 6pm - 9pm
-      'Late Night': [1260, 1440] // 9pm - 12am
+      'Morning': [480, 720],
+      'Afternoon': [840, 1020],
+      'Evening': [1080, 1260],
+      'Late Night': [1260, 1440]
     };
     const [peakStart, peakEnd] = peakRanges[peakWindow] || [840, 1020];
     const eventColors = ['bg-[#A9C5D3]', 'bg-[#FADCD5]', 'bg-[#D9CCE8]', 'bg-[#F5D5B8]'];
@@ -258,10 +298,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({
         } 
         else {
           const inPeak = currentTime >= peakStart && currentTime < peakEnd;
-          // Determine focus duration based on being in peak window and user rules
           let focusDur = gap;
           if (inPeak) {
-             // For "Add Focus" logic, user wants 1h blocks or 45m blocks
              if (currentAdj > 0) {
                focusDur = Math.min(focusRemaining >= 60 && (focusGoal + currentAdj - focusGoal) < 1 ? 60 : 45, gap);
              } else {
@@ -295,8 +333,8 @@ const DashboardView: React.FC<DashboardViewProps> = ({
 
   const stats = useMemo(() => {
     const calcForSchedule = (s: ScheduleItem[]) => {
-      let focusMins = 0; // Peak + Standard + Meeting
-      let breakMins = 0; // Break + Wellness + Lunch + Hobby
+      let focusMins = 0;
+      let breakMins = 0;
       s.forEach(item => {
         if (item.type === 'focus' || item.type === 'meeting') {
           focusMins += item.duration;
@@ -339,10 +377,6 @@ const DashboardView: React.FC<DashboardViewProps> = ({
     const diffHours = diffMins / 60;
     
     if (direction === 'add') {
-      // Logic: 
-      // If diff < 1h: add one 1-hour session.
-      // If diff >= 1h: break into max 45 min sessions.
-      // We adjust the manualAdjustment state to trigger re-generation with a higher effective goal.
       const adjustment = diffMins < 60 ? 1 : Math.ceil(diffHours + 0.5);
       
       setManualAdjustment(prev => ({
@@ -350,8 +384,6 @@ const DashboardView: React.FC<DashboardViewProps> = ({
         [activeDay.yyyymmdd]: (prev[activeDay.yyyymmdd] || 0) + adjustment
       }));
 
-      // Identify the new sessions created for auto-scroll
-      // We'll wait for the next render to find the new IDs
       setTimeout(() => {
         const firstNew = schedule.find(item => !completedSessions.has(item.id) && item.type === 'focus');
         if (firstNew) {
@@ -362,7 +394,6 @@ const DashboardView: React.FC<DashboardViewProps> = ({
       }, 100);
 
     } else {
-      // Logic: Drop sessions based on diff
       const reduction = Math.ceil(diffHours);
       setManualAdjustment(prev => ({
         ...prev,
@@ -371,13 +402,24 @@ const DashboardView: React.FC<DashboardViewProps> = ({
     }
   };
 
+  const handleSessionStart = (id: string) => {
+    setActiveSessionId(id);
+  };
+
   const handleSessionComplete = (id: string) => {
     setCompletedSessions(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      next.add(id);
       return next;
     });
+
+    // Auto-play logic: find the next session and set it as active
+    const currentIndex = schedule.findIndex(item => item.id === id);
+    if (currentIndex !== -1 && currentIndex < schedule.length - 1) {
+      setActiveSessionId(schedule[currentIndex + 1].id);
+    } else {
+      setActiveSessionId(null);
+    }
   };
 
   const formatHours = (mins: number) => {
@@ -397,6 +439,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
               onClick={() => {
                 setSelectedDayIndex(i);
                 setStatsMode('daily');
+                setActiveSessionId(null); // Reset active session when changing day
               }}
               className={`flex flex-col items-center justify-center min-w-[70px] lg:min-w-[90px] h-[80px] lg:h-[100px] rounded-3xl lg:rounded-[2.5rem] transition-all shadow-sm shrink-0 ${
                 selectedDayIndex === i 
@@ -458,7 +501,6 @@ const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
-        {/* Goal Adjustment Prompt */}
         {statsMode === 'daily' && goalDiff && goalDiff !== 'match' && (
           <div className={`rounded-3xl p-6 lg:p-8 border flex flex-col sm:flex-row items-center justify-between gap-6 transition-all animate-in fade-in slide-in-from-top-2 duration-300 ${
             goalDiff === 'under' ? 'bg-orange-50 border-orange-100 text-orange-800' : 'bg-blue-50 border-blue-100 text-blue-800'
@@ -489,23 +531,21 @@ const DashboardView: React.FC<DashboardViewProps> = ({
         )}
       </div>
 
-      {/* Header */}
       <div className="space-y-1 lg:space-y-2 text-center md:text-left">
         <p className="text-[#ED6A45] font-bold text-[10px] lg:text-sm uppercase tracking-[0.2em]">{activeDay.day} TIMELINE</p>
         <h2 className="text-2xl lg:text-4xl font-black text-gray-900 tracking-tight">{activeDay.fullDateString}</h2>
       </div>
 
-      {/* Timeline List */}
       <div className="space-y-6 lg:space-y-8">
         {schedule.length > 0 ? schedule.map((item) => {
           const isDone = completedSessions.has(item.id);
           const isNewlyAdded = newSessionIds.has(item.id);
+          const isActive = activeSessionId === item.id;
           return (
             <div 
               key={item.id} 
-              // Fix: TypeScript error in ref callback by ensuring it returns void instead of the element.
               ref={el => { itemRefs.current[item.id] = el; }}
-              className={`flex flex-col md:flex-row items-stretch md:items-start space-y-2 md:space-y-0 md:space-x-6 lg:space-x-10 group transition-all duration-300 ${isDone ? 'opacity-50 grayscale-[0.2]' : ''} ${isNewlyAdded ? 'ring-4 ring-[#ED6A45]/20 rounded-3xl' : ''}`}
+              className={`flex flex-col md:flex-row items-stretch md:items-start space-y-2 md:space-y-0 md:space-x-6 lg:space-x-10 group transition-all duration-300 ${isDone ? 'opacity-50 grayscale-[0.2]' : ''} ${isNewlyAdded ? 'ring-4 ring-[#ED6A45]/20 rounded-3xl' : ''} ${isActive ? 'bg-[#ED6A45]/5 rounded-[2.5rem]' : ''}`}
             >
               <div className="w-full md:w-16 md:pt-6 flex-shrink-0">
                 <span className={`text-gray-400 font-bold tabular-nums text-base lg:text-lg block text-center md:text-left ${isDone ? 'line-through' : ''}`}>{item.startTime}</span>
@@ -521,7 +561,16 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                       <span className={`text-gray-900 text-lg sm:text-xl lg:text-2xl font-black tracking-tight truncate ${isDone ? 'line-through' : ''}`}>{item.label}</span>
                       <span className="text-gray-400 font-bold text-[10px] sm:text-xs lg:text-sm uppercase tracking-wider">{item.duration} min rest period</span>
                     </div>
-                    <SessionTimer duration={item.duration} type={item.type} isCompleted={isDone} isMuted={isMuted} onComplete={() => handleSessionComplete(item.id)} />
+                    <SessionTimer 
+                      id={item.id}
+                      duration={item.duration} 
+                      type={item.type} 
+                      isCompleted={isDone} 
+                      isActive={isActive}
+                      isMuted={isMuted} 
+                      onStart={() => handleSessionStart(item.id)}
+                      onComplete={() => handleSessionComplete(item.id)} 
+                    />
                   </div>
                 ) : (
                   <div className={`${item.color || 'bg-white'} rounded-3xl lg:rounded-[2.5rem] p-6 lg:p-10 flex flex-col justify-center shadow-sm border border-white/50 min-h-[120px] lg:min-h-[160px] transition-all hover:shadow-xl hover:-translate-y-1 ${isDone ? 'scale-[0.98]' : ''}`}>
@@ -540,7 +589,16 @@ const DashboardView: React.FC<DashboardViewProps> = ({
                         </h3>
                       </div>
                       
-                      <SessionTimer duration={item.duration} type={item.type} isCompleted={isDone} isMuted={isMuted} onComplete={() => handleSessionComplete(item.id)} />
+                      <SessionTimer 
+                        id={item.id}
+                        duration={item.duration} 
+                        type={item.type} 
+                        isCompleted={isDone} 
+                        isActive={isActive}
+                        isMuted={isMuted} 
+                        onStart={() => handleSessionStart(item.id)}
+                        onComplete={() => handleSessionComplete(item.id)} 
+                      />
                     </div>
                   </div>
                 )}

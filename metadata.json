@@ -1,5 +1,5 @@
 {
-  "name": "Focus Planner UI Clone",
+  "name": "NeuroFlow App building",
   "description": "A pixel-perfect recreation of a daily focus and energy window planning interface with time pickers, range sliders, and custom styling.",
   "requestFramePermissions": [
     "microphone"
